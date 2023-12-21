@@ -541,10 +541,13 @@ it requires higher resource consumption.  So it is used as the default."
   ;; too do all that by hand, but also be a little cautious.
   (save-window-excursion
     (save-mark-and-excursion
-        ;; Actually run the screensaver
-        (if (fboundp zmx-implementation-function)
-            (funcall zmx-implementation-function)
-          (error "zmx-implementation-function needs to point to a function"))))
+
+      (delete-other-windows)
+      
+      ;; Actually run the screensaver
+      (if (fboundp zmx-implementation-function)
+          (funcall zmx-implementation-function)
+        (error "zmx-implementation-function needs to point to a function"))))
     
   (run-hooks 'zmx-after-hook))
 
