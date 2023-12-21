@@ -1,10 +1,13 @@
-;; zone-matrix.el --- The matrix screen saver on Emacs
+;; zone-matrix.el --- The matrix screen saver on Emacs -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2011 Dylan.Wen
+;; Some cleanup 2023 by twitchy-ears.
 
 ;; Author: Dylan.Wen <hhkbp2@gmail.com>
 ;; Created: Jan 25, 2011
-;; Time-stamp: <2017-05-01 16:13>
+;; Version: 0.2
+;; Package-Requires ((emacs "29.1") cl-lib)
+;; Keywords: zone matrix
 
 ;; This file is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -26,12 +29,20 @@
 ;; A note on noun:
 ;; A light bar represents a short list of chars highlighted green in column
 ;; on the screen, according to the film The Matrix.
+;;
+;; To make it work you probably just need something like this in your
+;; init file:
+;;
+;; (use-package zone-matrix
+;;  :config
+;;  (setq zone-programs [zone-matrix])
+;;  (zone-when-idle 60))
+
 
 ;;; Code:
 
-
 (require 'zone)
-(eval-when-compile (require 'cl))
+(eval-when-compile (require 'cl-lib))
 
 
 (defgroup zone-matrix nil
@@ -99,7 +110,7 @@
   :group 'zone-matrix)
 
 
-(defcustom zmx-unicode-mode nil
+(defcustom zmx-unicode-mode t
   "*The flag indicates that char displayed is unicode or ansii."
   :group 'zone-matrix)
 
@@ -147,36 +158,15 @@ If its value set to positive integer N, the chance of a light bar fades
 into blank screen would be 1/N."
   :group 'zone-matrix)
 
-
-(defsubst zmx-hit-chance (rchance)
-  "Try to hit the chance of RCHANCE using random number."
-  (= (random rchance) 1))
-
-(defsubst zmx-light-bar-raise ()
-  "Test whether a light bar would raise in random."
-  (zmx-hit-chance zmx-light-bar-raise-rchance))
-
-(defsubst zmx-light-bar-highlight ()
-  "Test whether a light bar would highlight in random."
-  (zmx-hit-chance zmx-light-bar-highlight-rchance))
-
-(defsubst zmx-light-bar-fade ()
-  "Test whether a light bar would fade in random."
-  (zmx-hit-chance zmx-light-bar-fade-rchance))
-
-
-(defun zmx-check-settings ()
-  "Check the environment variable settings."
-  (unless (and (> zmx-update-time 0)
-               ;;(> zmx-update-speed-factor 1)
-               (> zmx-light-bar-max-length 1)
-               (> zmx-light-bar-max-number 1))
-    (error "Error in function `zone-matrix': wrong setting")))
-
-
 (defcustom zmx-ascii-char-table
   "ABCDEFGHIGKLMNOPQRSTUVWXYZabcdefghigklmnopqrstuvwxyz0123456789"
   "*ASCII char table to form light bar."
+  :group 'zone-matrix)
+
+
+(defcustom zmx-implementation-function
+  #'zmx-text-impl
+  "Should be either a function pointer to zmx-text-impl or zmx-buffer-impl"
   :group 'zone-matrix)
 
 (defcustom zmx-japan-char-table
@@ -219,11 +209,37 @@ into blank screen would be 1/N."
   "*Unicode char table to form light bar."
   :group 'zone-matrix)
 
+(defvar zmx-before-hook nil "Hooks that are run before the zone starts")
+(defvar zmx-after-hook nil "Hooks that are run after the zone ends")
+
+(defsubst zmx-hit-chance (rchance)
+  "Try to hit the chance of RCHANCE using random number."
+  (= (random rchance) 1))
+
+(defsubst zmx-light-bar-raise ()
+  "Test whether a light bar would raise in random."
+  (zmx-hit-chance zmx-light-bar-raise-rchance))
+
+(defsubst zmx-light-bar-highlight ()
+  "Test whether a light bar would highlight in random."
+  (zmx-hit-chance zmx-light-bar-highlight-rchance))
+
+(defsubst zmx-light-bar-fade ()
+  "Test whether a light bar would fade in random."
+  (zmx-hit-chance zmx-light-bar-fade-rchance))
+
+(defun zmx-check-settings ()
+  "Check the environment variable settings."
+  (unless (and (> zmx-update-time 0)
+               ;;(> zmx-update-speed-factor 1)
+               (> zmx-light-bar-max-length 1)
+               (> zmx-light-bar-max-number 1))
+    (error "Error in function `zone-matrix': wrong setting (check zmx-update-time > 0, zmx-light-bar-max-length > 1, zmx-light-bar-max-number > 1)")))
 
 (defun zmx-blank-char ()
   "Return a blank char."
   (if zmx-unicode-mode
-      (encode-char 12288 'ucs)
+      (char-from-name "IDEOGRAPHIC SPACE")
     ? ))
 
 (defun zmx-random (seq)
@@ -284,15 +300,15 @@ default nil.
     `(let ((,end-value-name (1- ,range-end))
            (,start-value-name ,range-start))
        (if ,from-end
-           (do* ((,var ,end-value-name (1- ,var)))
+           (cl-do* ((,var ,end-value-name (1- ,var)))
                ((< ,var ,start-value-name))
              ,@body)
-         (do* ((,var ,start-value-name (1+ ,var)))
+         (cl-do* ((,var ,start-value-name (1+ ,var)))
              ((> ,var ,end-value-name))
            ,@body)))))
 
 
-(defun zmx-inner-loop-buffer-impl (win-width visible-column-number)
+(defun zmx-inner-loop-buffer-impl (win-width win-height visible-column-number)
   "The inner loop of `zmx-buffer-impl'."
   (let ((column-index 0)
         (point 0)
@@ -321,7 +337,7 @@ default nil.
           (zmx-update point
                       (zmx-set-str-face
                        (zmx-random-char-str)
-                       (if (<= (incf (aref light-bar-states column-index))
+                       (if (<= (cl-incf (aref light-bar-states column-index))
                                zmx-light-bar-max-length)
                            (if (zmx-light-bar-fade)
                                'zmx-light-bar-tail-face
@@ -330,14 +346,15 @@ default nil.
          ((equal old-property 'zmx-light-bar-tail-face)
           ;; The light bar fades.
           (zmx-update point
-                      (zmx-set-str-face (make-string 1 (zmx-blank-char)) nil))
+                      (zmx-set-str-face (make-string 1 (zmx-blank-char))
+                                        nil))
           (aset light-bar-states column-index 0))
          ((member old-property zmx-light-bar-head-faces)
           ;; The light bar raises just now.
           (zmx-update point
                       (zmx-set-str-face
                        (zmx-random-char-str)
-                       (if (<= (incf (aref light-bar-states column-index))
+                       (if (<= (cl-incf (aref light-bar-states column-index))
                                zmx-light-bar-max-length)
                            (if (zmx-light-bar-highlight)
                                (zmx-random-light-bar-head-face)
@@ -352,7 +369,7 @@ default nil.
                                               (zmx-random-light-bar-head-face)))
                 (aset light-bar-states column-index 1))
             (zmx-update point
-                        (zmx-set-str-face (make-string 1 (zmx-blank-char)) nil))))))
+                        (zmx-set-str-face (make-string 1 (zmx-blank-char)) 'nil))))))
       ;; wait for some time to update the screen
       (sit-for zmx-update-time))))
 
@@ -366,6 +383,10 @@ default nil.
    ;; Any proper message ouput to minibuffer sits here.
    ;; Personally I prefer to just clean it.
    (message "")
+
+   ;; Inside the *zone* buffer now
+   (face-remap-add-relative 'nobreak-space '(:underline nil))
+   
    (let* (;; To minus one from `(window-width)' to avoid
           ;; the continuation char '$' or '\' from displaying
           (win-width (if zmx-unicode-mode
@@ -385,13 +406,13 @@ default nil.
          (insert line)))
      ;; Inner loop
      (condition-case err
-         (zmx-inner-loop-buffer-impl win-width visible-column-number)
+         (zmx-inner-loop-buffer-impl win-width win-height visible-column-number)
        ((debug error) (setq quit t))))
    )
   )
 
 
-(defun zmx-inner-loop-text-impl (win-width visible-column-number text)
+(defun zmx-inner-loop-text-impl (win-width win-height visible-column-number text)
   "The inner loop of `zmx-text-impl'."
   (let ((column-index 0)
         (point 0)
@@ -418,7 +439,7 @@ default nil.
           ;; The light bar continues to fall down.
           (aset text column-index (zmx-random-char))
           (put-text-property column-index (1+ column-index) 'face
-                             (if (<= (incf (aref light-bar-states column-index))
+                             (if (<= (cl-incf (aref light-bar-states column-index))
                                      zmx-light-bar-max-length)
                                  (if (zmx-light-bar-fade)
                                      'zmx-light-bar-tail-face
@@ -428,13 +449,17 @@ default nil.
          ((equal old-property 'zmx-light-bar-tail-face)
           ;; The light bar fades.
           (aset text column-index (zmx-blank-char))
-          (put-text-property column-index (1+ column-index) 'face nil text)
+          (put-text-property column-index
+                             (1+ column-index)
+                             'face
+                             nil
+                             text)
           (aset light-bar-states column-index 0))
          ((member old-property zmx-light-bar-head-faces)
           ;; The light bar raises just now.
           (aset text column-index (zmx-random-char))
           (put-text-property column-index (1+ column-index) 'face
-                             (if (<= (incf (aref light-bar-states column-index))
+                             (if (<= (cl-incf (aref light-bar-states column-index))
                                      zmx-light-bar-max-length)
                                  (if (zmx-light-bar-highlight)
                                      (zmx-random-light-bar-head-face)
@@ -452,7 +477,10 @@ default nil.
                 (aset light-bar-states column-index 1))
             (progn
               (aset text column-index (zmx-blank-char))
-              (put-text-property column-index (1+ column-index) 'face nil
+              (put-text-property column-index
+                                 (1+ column-index)
+                                 'face
+                                 nil
                                  text))))))
       ;; clean last screen and insert the new content
       (erase-buffer)
@@ -470,6 +498,10 @@ default nil.
   ;; In `zone-matrix' the point change a lot in a really fast speed.
   (zone-hiding-mode-line
    (message "")
+
+   ;; Inside the *zone* buffer now
+   (face-remap-add-relative 'nobreak-space '(:underline nil))
+
    (let* (;; To minus one from `(window-width)' to avoid
           ;; the continuation char '$' or '\' from displaying
           (win-width (if zmx-unicode-mode
@@ -488,7 +520,8 @@ default nil.
        (aset text (1- (* (1+ line-index) win-width)) ?\n))
      ;; Inner loop
      (condition-case err
-         (zmx-inner-loop-text-impl win-width visible-column-number text)
+         (zmx-inner-loop-text-impl win-width win-height visible-column-number text)
+       ;; (t (message "error %s" err)))))) ;; to debug use this instead
        (error (setq quit t))))))
 
 
@@ -501,7 +534,19 @@ The former keeps track of a text object, which will be used to
 reflesh the whole screen.  The later directly modify the zone buffer.
 It seems the `zmx-text-impl' runs somewhat nicer than the other, even though
 it requires higher resource consumption.  So it is used as the default."
-  (zmx-text-impl))
+
+  (run-hooks 'zmx-before-hook)
+
+  ;; Zone itself hides all the window decorations now we don't have
+  ;; too do all that by hand, but also be a little cautious.
+  (save-window-excursion
+    (save-mark-and-excursion
+        ;; Actually run the screensaver
+        (if (fboundp zmx-implementation-function)
+            (funcall zmx-implementation-function)
+          (error "zmx-implementation-function needs to point to a function"))))
+    
+  (run-hooks 'zmx-after-hook))
 
 
 (provide 'zone-matrix)
